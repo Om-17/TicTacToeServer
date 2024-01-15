@@ -1,0 +1,18 @@
+{
+    "name": "tictactoe/server",
+    "autoload": {
+        "psr-4": {
+            "Tictactoe\\Server\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Om-17",
+            "email": "omadreja@gmail.com"
+        }
+    ],
+    "require": {
+        "cboden/ratchet": "^0.4.4",
+        "firebase/php-jwt": "^6.10"
+    }
+}
