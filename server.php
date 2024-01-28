@@ -21,9 +21,9 @@ use Firebase\JWT\Key;
 
 // Add this to your code to handle database connection
 
-$dsn = "mysql:host=".DB_HOST.";dbname=".DB_NAME;
+$dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME;
 $username = DB_USER;
-$password =DB_PASSWORD;
+$password = DB_PASSWORD;
 
 try {
     $pdo = new PDO($dsn, $username, $password);
@@ -35,25 +35,35 @@ class TicTacToeServer implements MessageComponentInterface
 {
     private $secretKey = SecretKey;
     protected $connections = [];
-    
-    protected $users_connections = [];
+
+    // protected $users_connections = [];
+    protected $players_connections = [];
+    protected $games;
+    public function __construct()
+    {
+        $this->games = [];
+    }
 
     public function onOpen(ConnectionInterface $conn)
     {
         $token = $this->extractTokenFromQueryString($conn);
-        if (!is_null($token)){
+        if (!is_null($token)) {
 
             try {
                 $user = $this->getUserFromToken($token);
-    
+
                 $this->connections[$conn->resourceId] = $conn;
-                $this->users_connections[$user['id']] = $conn;
+             
+            
+                // $this->users_connections[$user['id']] = $conn; 
+                $this->players_connections[] =['id'=>$user['id'],'conn'=>$conn];  
+                
+                
                 echo "Connection {$conn->resourceId} (User: {$user['username']}, {$user['id']}) has connected\n";
-                $user_obj=new DBClass('users');
-                $user_obj->update('id',$user['id'],['status'=>1]);
-                $user_obj=null;
-                $conn->send( json_encode(["message"=>"Welcome to the WebSocket server!"]));
-    
+                $user_obj = new DBClass('users');
+                $user_obj->update('id', $user['id'], ['status' => 1]);
+                $user_obj = null;
+                $conn->send(json_encode(["message" => "Welcome to the WebSocket server!"]));
             } catch (\Exception $e) {
                 // Token verification failed
                 echo "Connection {$conn->resourceId} failed authentication\n";
@@ -66,48 +76,47 @@ class TicTacToeServer implements MessageComponentInterface
     {
         $data = json_decode($msg, true);
         print_r($data);
-        
+
         if (isset($data['action'])) {
             switch ($data['action']) {
                 case 'createRoom':
-                   
+
                     $token = $this->extractTokenFromQueryString($from);
                     $user = $this->getUserFromToken($token);
 
-                    $roomId = $this->createRoom($user['id'],$from);
+                    $roomCode = $this->createRoom($user['id'], $from);
 
                     break;
                 case 'joinRoom':
                     $token = $this->extractTokenFromQueryString($from);
-                 
+
                     $user = $this->getUserFromToken($token);
 
                     $roomCode = $data['roomCode'];
                     echo $roomCode;
                     $this->joinRoom($from, $user['id'], $roomCode);
-                    
+
                     break;
                 case 'leaveRoom':
                     unset($this->connections[$from->resourceId]);
                     $this->leaveRoom($from);
+
+
                 default:
-                    if(isset( $data['roomCode'])){
+                    if (isset($data['roomCode'])) {
                         $roomCode = $data['roomCode'];
-                    
-                        $this->startCommunication($from, $roomCode,$msg);
+
+                        $this->startGame($from, $roomCode, $msg);
                     }
-                    
+
                     // Handle other actions
                     break;
-                
-               
             }
-        }
-        else{
-            if(isset( $data['roomCode'])){
+        } else {
+            if (isset($data['roomCode'])) {
                 $roomCode = $data['roomCode'];
 
-                $this->startCommunication($from, $roomCode,$msg);
+                $this->startGame($from, $roomCode, $msg);
             }
         }
 
@@ -121,24 +130,38 @@ class TicTacToeServer implements MessageComponentInterface
     }
 
     public function onClose(ConnectionInterface $conn)
-    { 
-        
+    {
+
         $userId = null;
-    
-        // Find the user ID based on the connection
-        foreach ($this->users_connections as $id => $userConn) {
-            if ($conn === $userConn) {
-                $userId = $id;
-                break;
+
+        foreach ($this->players_connections as $key => $player) {
+            if ($player['conn'] == $conn) {
+                $previousPlayerId = $player['id'];
+                unset($this->players_connections[$key]);
+        
+                // Check if the same player has another connection
+                $hasOtherConnection = false;
+                foreach ($this->players_connections as $otherPlayer) {
+                    if ($otherPlayer['id'] == $previousPlayerId) {
+                        $hasOtherConnection = true;
+                        break;
+                    }
+                }
+        
+                // Update the player's status based on whether they have another connection
+                $user_obj = new DBClass('users');
+                $status = $hasOtherConnection ? true : false;
+                $user_obj->update('id', $previousPlayerId, ['status' => $status]);
+        
+                break; // Stop the loop once the matching connection is found and removed
             }
         }
-        if ($userId!==null) {
-            $user_obj=new DBClass('users');
-            $user_obj->update('id',$userId,['status'=>false]);
-        }
+        
+        
+
         unset($this->connections[$conn->resourceId]);
         // $this->leaveRoom($conn);
-      
+
         echo "Connection {$conn->resourceId} has disconnected\n";
     }
 
@@ -156,19 +179,20 @@ class TicTacToeServer implements MessageComponentInterface
         return $params['token'] ?? null;
     }
 
-    protected function checkuserstatus($userid) {
+    protected function checkuserstatus($userid)
+    {
         if ($userid !== null) {
             $user_obj = new DBClass('users');
             $res_user = $user_obj->get('id', $userid);
-    
+
             if (is_array($res_user) && isset($res_user['status'])) {
-                
+
                 return (bool) $res_user['status'];
             }
         }
         return false;
     }
-    
+
     protected function getUserFromToken($token)
     {
         // Decode and verify the JWT token to get user information
@@ -181,195 +205,268 @@ class TicTacToeServer implements MessageComponentInterface
         ];
     }
 
-    protected function createRoom($userId,ConnectionInterface $conn)
-    {   
-        $roomCode = substr( bin2hex(random_bytes(3)), 0, 7); // Combining uniqid with random bytes
+    protected function createRoom($userId, ConnectionInterface $conn)
+    {
+        $roomCode = strtoupper(substr(bin2hex(random_bytes(3)), 0, 6)); // Combining uniqid with random bytes
 
-     
-        $roomobj= new DBClass('rooms');
-        $roomobjexist=$roomobj->exists('user1_id',$userId);
-        if($roomobjexist){
-            $result=$roomobj->delete('user1_id',$userId);   
+
+        $roomobj = new DBClass('rooms');
+        $roomobjexist = $roomobj->exists('player1', $userId);
+
+        if ($roomobjexist) {
+            $result = $roomobj->delete('player1', $userId);
         }
-        echo "Creating room for user".$userId;
+        echo "Creating room for user" . $userId;
         // Insert the room into the database
-        $result=$roomobj->create(["room_code"=>$roomCode,"user1_id"=>$userId]);
-        $roomId =$result['last_id'];
-        $roomobj=null;
-        $conn->send(json_encode(["room_code"=>$roomCode]));
+
+        $result = $roomobj->create([
+            "roomCode" => $roomCode, "player1" => $userId, 'player2' => null,
+            'board' => "[['', '', ''], ['', '', ''], ['', '', '']]",
+            'turn' => 1,
+            'gameOver' => false,
+            'chancesLeft' => 9,
+        ]);
+        // $roomId =$result['last_id'];
+        print_r($result);
+        $roomobj = null;
+        $this->games[$roomCode] = [
+            'player1' => $userId,
+            'player2' => null,
+            'board' => [['', '', ''], ['', '', ''], ['', '', '']],
+            'turn' => 1,
+            'gameOver' => false,
+            'chancesLeft' => 9,
+        ];
+        $conn->send(json_encode(["createroomCode" => $roomCode]));
         echo "Room {$roomCode} created\n";
-        return $roomId;
+        return $roomCode;
     }
 
     protected function joinRoom(ConnectionInterface $conn, $userId, $roomCode)
     {
         // Check if the room exists
-        $roomobj= new DBClass('rooms');
-        $result=$roomobj->get('room_code',$roomCode);
-        
-        // print_r($result['user1_id']);
-        // echo(!isset($result['user1_id']));
-        // echo  $this->checkuserstatus($result['user1_id']);
+        $roomobj = new DBClass('rooms');
+        $result = $roomobj->get('roomCode', $roomCode);
+
+        // print_r($result['player1']);
+        // echo(!isset($result['player1']));
+        // echo  $this->checkuserstatus($result['player1']);
         // echo  $this->checkuserstatus($userId);
-        // echo $this->checkuserstatus($result['user1_id']) &&  $this->checkuserstatus($userId)!=true;
-            // echo !isset($result['user1_id']);
-            // echo !$this->checkuserstatus($result['user1_id']) &&  !$this->checkuserstatus($userId);
+        // echo $this->checkuserstatus($result['player1']) &&  $this->checkuserstatus($userId)!=true;
+        // echo !isset($result['player1']);
+        // echo !$this->checkuserstatus($result['player1']) &&  !$this->checkuserstatus($userId);
 
-            if(isset($result['user1_id'])){
-                if($result['user1_id']==$userId){
-                    $conn->send(json_encode(["error"=>"player 1 and player2 both are same."]));
-                    return ;
+        if (isset($result['player1'])) {
+            if ($result['player1'] == $userId) {
+                $conn->send(json_encode(["error" => "player 1 and player2 both are same."]));
+                return;
+            } elseif ($this->checkuserstatus($result['player1']) &&  $this->checkuserstatus($userId)) {
+                if (!isset($result['player2'])) {
+                    $roomobj->update('id', $result['id'], ['player2' => $userId]);
+                     $roomId = $result['id'];
+                    $user2 = new DBClass('users');
+                    $resultuser2 = $user2->get('id', $userId);
 
-                }
-                elseif($this->checkuserstatus($result['user1_id']) &&  $this->checkuserstatus($userId)){
-                    if(!isset($result['user2_id'])){
-                        $roomobj->update('id',$result['id'],['user2_id'=>$userId]);
-                        $roomId = $result['id'];
-                        $user2=new DBClass('users');
-                        $resultuser2=$user2->get('id',$userId);
-                      
-                        echo "User id {$userId} joined room {$roomId}\n";
-            
-                        // Notify the other user in the room
-                        $otherUserId = $result['user1_id'];
-                        if($otherUserId){
-                             $user1=new DBClass('users');
-                          $resultuser1=$user1->get('id',$otherUserId);
-                          $resultuser2=$user1->get('id',$userId);
-                          if(isset($resultuser1)){
-                             $user1name=$resultuser1['username'] ;
-                             $user2name=$resultuser2['username'] ;
-         
-                             $conn->send(json_encode(["userjoined"=>"Game Start Now","player1name"=>$user1name,"player2name"=>$user2name,"roomCode"=>$roomCode]));
-         
-         
-                          }
-                          if(isset($resultuser2)){
-                             $user1name=$resultuser1['username'] ;
-         
-                             $user2name=$resultuser2['username'] ;
-                             $this->users_connections[$otherUserId]->send(json_encode(["userjoined"=>"Game Start Now","player1name"=>$user1name,"player2name"=>$user2name,"roomCode"=>$roomCode]));
-             
-                            }
-                          
-                            return ;
-         
+                    echo "User id {$userId} joined room {$roomId}\n";
+
+                    // Notify the other user in the room
+                    $otherUserId = $result['player1'];
+                    if ($otherUserId) {
+                        $user1 = new DBClass('users');
+                        $resultuser1 = $user1->get('id', $otherUserId);
+                        $resultuser2 = $user1->get('id', $userId);
+                        if (isset($resultuser1)) {
+                            $user1name = $resultuser1['username'];
+                            $user2name = $resultuser2['username'];
+
+                            $conn->send(json_encode(["userjoined" => "Game Start Now", "player1name" => $user1name, "player2name" => $user2name, "roomCode" => $roomCode]));
                         }
-                       
-                    }
-                    else{
-                        $conn->send(json_encode(["error"=>"Room {$roomCode} is full"]));
-                  return ;
-                    }
-                }
-               
-           
-                 else{
-                    $conn->send(json_encode(["status"=>"other player are offline."]));
-                    return ;
-                  
-                
-                 }
-        } else {
-            $conn->send(json_encode(["error"=>"Room {$roomCode} is  does not exist and try again"]));
-            
-            return ;
+                        if (isset($resultuser2)) {
+                            $user1name = $resultuser1['username'];
 
+                            $user2name = $resultuser2['username'];
+                            foreach ($this->players_connections as $player) {
+                                if ($player['id'] == $otherUserId) {
+                                    $conn = $player['conn']; // Get the connection object
+                                    $conn->send(json_encode([
+                                        "userjoined" => "Game Start Now",
+                                        "player1name" => $user1name,
+                                        "player2name" => $user2name,
+                                        "roomCode" => $roomCode
+                                    ]));
+                                    break; // Break the loop once the message is sent
+                                }
+                            }
+                            
+                        }
+
+                        return;
+                    }
+                } else {
+                    $conn->send(json_encode(["error" => "Room {$roomCode} is full"]));
+                    return;
+                }
+            } else {
+                $conn->send(json_encode(["status" => "other player are offline."]));
+                return;
+            }
+        } else {
+            $conn->send(json_encode(["error" => "Room {$roomCode} is  does not exist and try again"]));
+
+            return;
         }
     }
 
     protected function leaveRoom(ConnectionInterface $conn)
     {
         $userId = null;
-    
-        // Find the user ID based on the connection
-        foreach ($this->users_connections as $id => $userConn) {
-            if ($conn === $userConn) {
-                $userId = $id;
+
+        
+
+        foreach ($this->players_connections as $player) {
+            if ($conn === $player['conn']) {
+                $userId = $player['id'];
                 break;
             }
         }
-    
+        
+
         if ($userId !== null) {
-            
+
             global $pdo;
 
             // Check if the user is in any room
             $roomId = null;
-            $stmt = $pdo->prepare("SELECT id, user1_id, user2_id FROM rooms WHERE user1_id = :userId OR user2_id = :userId");
+            $stmt = $pdo->prepare("SELECT id, player1, player2 FROM rooms WHERE player1 = :userId OR player2 = :userId");
             $stmt->bindParam(':userId', $userId, PDO::PARAM_INT);
             $stmt->execute();
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    
+
             if ($result) {
                 $roomId = $result['id'];
-    
+
                 // Remove the user from the room
-                if ($result['user1_id'] == $userId) {
-                    $stmt = $pdo->prepare("UPDATE rooms SET user1_id = NULL WHERE id = :roomId");
-                } elseif ($result['user2_id'] == $userId) {
-                    $stmt = $pdo->prepare("UPDATE rooms SET user2_id = NULL WHERE id = :roomId");
+                if ($result['player1'] == $userId) {
+                    $stmt = $pdo->prepare("UPDATE rooms SET player1 = NULL WHERE id = :roomId");
+                } elseif ($result['player2'] == $userId) {
+                    $stmt = $pdo->prepare("UPDATE rooms SET player2 = NULL WHERE id = :roomId");
                 }
-    
+
                 $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
                 $stmt->execute();
-    
-                echo "User id {$userId} left room {$roomId}\n";
-    
+
+
                 // Notify the other user in the room, if any
-                $otherUserId = ($result['user1_id'] == $userId) ? $result['user2_id'] : $result['user1_id'];
-    
-                if ($otherUserId && isset($this->users_connections[$otherUserId])) {
-                    $this->users_connections[$otherUserId]->send(json_encode(["message"=>"other player left the game."]));
+                $otherUserId = ($result['player1'] == $userId) ? $result['player2'] : $result['player1'];
+                echo "User id {$userId} left room {$roomId}\n{$otherUserId}";
+
+                if ($otherUserId) {
+                    foreach ($this->players_connections as $player) {
+                        if ($player['id'] == $otherUserId) {
+                            $player['conn']->send(json_encode(["message" => "other player left the game."]));
+                            break; // Stop the loop once the message is sent
+                        }
+                    }
                 }
-                $stmt = $pdo->prepare("SELECT id, user1_id, user2_id FROM rooms WHERE user1_id = :userId OR user2_id = :userId");
+                
+                $stmt = $pdo->prepare("SELECT id, player1, player2 FROM rooms WHERE player1 = :userId OR player2 = :userId");
                 $stmt->bindParam(':userId', $userId, PDO::PARAM_INT);
                 $stmt->execute();
                 $getresult = $stmt->fetch(PDO::FETCH_ASSOC);
                 // Check if both users have left, then delete the room
                 print_r($getresult);
-                
-                    if ( is_null($getresult['user1_id'])  || is_null($getresult['user2_id'] )) {
-                        $stmt = $pdo->prepare("DELETE FROM rooms WHERE id = :roomId");
-                        $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
-                        $stmt->execute();
-                        echo "Room {$roomId} deleted\n";
-                    }
-               
-               
+
+                if (is_null($getresult['player1'])  || is_null($getresult['player2'])) {
+                    $stmt = $pdo->prepare("DELETE FROM rooms WHERE id = :roomId");
+                    $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
+                    $stmt->execute();
+                    echo "Room {$roomId} deleted\n";
+                }
             }
         }
     }
-    protected function startCommunication(ConnectionInterface $from, $roomCode,$msg)
+    protected function startGame(ConnectionInterface $from, $roomCode, $msg)
     {
         $roomobj = new DBClass('rooms');
-        $result = $roomobj->get('room_code', $roomCode);
-        $fromuser_id=null;
-        foreach ($this->users_connections as $id => $userConn) {
-            if ($from === $userConn) {
-                $fromuser_id = $id;
-                break;
+        $roomobjexist = $roomobj->exists('roomCode', $roomCode);
+        if ($roomobjexist) {
+
+            $result = $roomobj->get('roomCode', $roomCode);
+            $fromuser_id = null;
+
+            // Find the user ID for the given connection
+            foreach ($this->players_connections as $player) {
+                if ($from === $player['conn']) {
+                    $fromuser_id = $player['id'];
+                    break;
+                }
             }
+            
+            if ($result && isset($result['player1']) && isset($result['player2'])) {
+                $user1Conn = [];
+                $user2Conn = [];
+            
+                // Find the connections for player1 and player2
+                foreach ($this->players_connections as $player) {
+                    if ($player['id'] == $result['player1']) {
+                        $user1Conn[] = $player['conn'];
+                        
+                        // $user1Conn->send(trim($msg));
+
+                    } elseif ($player['id'] == $result['player2']) {
+                        $user2Conn[] = $player['conn'];
+                        // $user2Conn->send(trim($msg));
+
+                    }
+                }
+            
+                // Check which player to send the message to
+                if ($fromuser_id != (int)$result['player2']) {
+                    if ($user2Conn !== null) {
+                        foreach ($user2Conn as $user2Connect){
+
+                            $user2Connect->send(trim($msg));
+                        }
+                     
+                    }
+                } else {
+                    if ($user1Conn !== null) {
+                        foreach ($user1Conn as $user1Connnet){
+
+                            $user1Connnet->send(trim($msg));
+                        }
+                      
+                    }
+                }
+            }
+            
+            // print_r($result);
+            // if ($result && isset($result['player1']) && isset($result['player2'])) {
+            //     $user1Conn = $this->users_connections[$result['player1']];
+            //     $user2Conn = $this->users_connections[$result['player2']];
+            //     // $resultupdate=$roomobj->update('roomCode',$roomCode,[
+            //     //         'board' => $msg['board'],
+            //     //      'turn' => $msg['turn'],
+            //     //      'chancesLeft' => $msg['chancesLeft'],
+            //     // ]);
+                
+            //     // echo "from user " . $fromuser_id."  to ".$result['player1']." to ".$result['player2'];
+            //     if ($fromuser_id != (int)$result['player2']) {
+
+            //         $user2Conn->send(trim($msg));
+            //         // $user2Conn->send(json_encode(trim($msg)));
+
+            //     } else {
+
+            //         $user1Conn->send(trim($msg));
+            //         // $user1Conn->send(json_encode(trim($msg)));
+            //     }
+            // }
         }
-        if ($result && isset($result['user1_id']) && isset($result['user2_id'])) {
-            $user1Conn = $this->users_connections[$result['user1_id']];
-            $user2Conn = $this->users_connections[$result['user2_id']];
-            echo "from user " . $fromuser_id."  to ".$result['user1_id']." to ".$result['user2_id'];
-            if ($fromuser_id != (int)$result['user2_id']) {
-                $user1Conn->send(json_encode(["player2"=>$msg]));
-            }
-            else{
-             
-                    $user2Conn->send(json_encode(["player1"=>$msg]));
-             
 
-            }
-
-          }
 
         $roomobj = null;
     }
-    
 }
 
 $server = IoServer::factory(
@@ -383,4 +480,3 @@ $server = IoServer::factory(
 
 echo "WebSocket server started at ws://0.0.0.0:8088\n";
 $server->run();
-?>

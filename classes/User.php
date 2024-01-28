@@ -99,7 +99,7 @@ class User extends DBconnection
     private function getUserById()
 {
     $userId = $this->conn->lastInsertId();
-    $sql = "SELECT * name FROM users WHERE id = :id";
+    $sql = "SELECT * FROM users WHERE id = :id";
     $stmt = $this->conn->prepare($sql);
     $stmt->bindParam(':id', $userId);
     $stmt->execute();
