@@ -50,6 +50,16 @@ if ($request_method == 'POST') {
         echo json_encode($data);
         exit();
     
+    } elseif (empty($inputdata['name'])) {
+        $data = [
+            "error" => 'Name is blank',
+        ];
+        http_response_code(400);
+
+      
+        echo json_encode($data);
+        exit();
+    
     } elseif (empty($inputdata['password'])) {
         $data = [
             "error" => ' Password is blank',

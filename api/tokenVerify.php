@@ -28,7 +28,8 @@ if ($request_method == 'POST') {
 
     try {
         $decoded = JWT::decode($token, new Key(SecretKey, 'HS256'));
-        
+        // print_r($decoded);
+       
       
         http_response_code(200);
         echo json_encode(['message' => 'Token verification successful']);

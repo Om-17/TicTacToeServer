@@ -139,6 +139,24 @@ class DBClass extends DBconnection
     }
     // return 1;
   }
+  public function querywithparams($sql, $params = [])
+{
+    // Prepare the query
+    $stmt = $this->conn->prepare($sql);
+
+    // Execute the query with the provided parameters
+    $stmt->execute($params);
+
+    // Fetch the result
+    $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Close the result cursor
+    $stmt->closeCursor();
+
+    // Return the result data
+    return $data;
+}
+
   public function aexists($conditions)
   {
     $sql = "SELECT COUNT(*) FROM $this->table WHERE ";

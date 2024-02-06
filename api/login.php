@@ -27,33 +27,31 @@ if($request_method == 'POST'){
             if (password_verify($password, $result['password'])){
                 $tokenId = base64_encode(random_bytes(32));
                 $issuedAt = time();
-                $expire = $issuedAt + 3600;  // Expire in 1 hour
+                $expire = $issuedAt + 230400;  // Expire in 3 days
                 $issuer = 'Tic Tac Toe';
-                $secretKey=SecretKey;
+                $secretKey = SecretKey;
                 $token = [
                     'iat'  => $issuedAt,
                     'jti'  => $tokenId,
                     'iss'  => $issuer,
-                   
+                    'exp'  => $expire, // Add this line to include the expiration time in the token
                     'userId'   => $result['id'],
                     'username' => $result['username'],
-                  
                 ];
             
                 $jwt = JWT::encode($token, $secretKey, 'HS256');
             
                 // Return the JWT token
-                   
                 echo json_encode(['token' => $jwt,'id'=>$result['id'], 'username' => $result['username'],]);
                 exit;
-           
+            
             }
             else{
                 http_response_code(401);
                 echo json_encode(['error' => 'Incorrect password.']);
                 exit;
-
             }
+            
         }
         else {
             http_response_code(401);

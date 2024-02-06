@@ -16,7 +16,7 @@ function NotAllowMethod($request_method)  {
 ];
 http_response_code(405);
 
-return json_encode($data);
+json_encode($data);
 
 }
 ob_end_flush();

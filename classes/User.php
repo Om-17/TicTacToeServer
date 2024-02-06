@@ -66,7 +66,7 @@ class User extends DBconnection
 
    
     $stmt->bindValue(':username', $this->username);
-    $stmt->bindValue(':name', $this->username);
+    $stmt->bindValue(':name', $this->name);
     $stmt->bindValue(':email', $this->email);
     $stmt->bindValue(':password', password_hash($this->password, PASSWORD_DEFAULT));
    

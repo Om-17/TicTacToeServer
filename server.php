@@ -46,79 +46,105 @@ class TicTacToeServer implements MessageComponentInterface
 
     public function onOpen(ConnectionInterface $conn)
     {
-        $token = $this->extractTokenFromQueryString($conn);
-        if (!is_null($token)) {
+        try {
+            $token = $this->extractTokenFromQueryString($conn);
+            if (!is_null($token)) {
 
-            try {
-                $user = $this->getUserFromToken($token);
+                try {
+                    $user = $this->getUserFromToken($token);
+                    if (is_array($user) && isset($user['error'])) {
+                        $conn->send(json_encode($user));
+                        $conn->close();
+                    } else {
 
-                $this->connections[$conn->resourceId] = $conn;
-             
-            
-                // $this->users_connections[$user['id']] = $conn; 
-                $this->players_connections[] =['id'=>$user['id'],'conn'=>$conn];  
-                
-                
-                echo "Connection {$conn->resourceId} (User: {$user['username']}, {$user['id']}) has connected\n";
-                $user_obj = new DBClass('users');
-                $user_obj->update('id', $user['id'], ['status' => 1]);
-                $user_obj = null;
-                $conn->send(json_encode(["message" => "Welcome to the WebSocket server!"]));
-            } catch (\Exception $e) {
-                // Token verification failed
-                echo "Connection {$conn->resourceId} failed authentication\n";
-                $conn->close();
+                        $this->connections[$conn->resourceId] = $conn;
+
+
+                        // $this->users_connections[$user['id']] = $conn; 
+                        $this->players_connections[] = ['id' => $user['id'], 'conn' => $conn];
+
+
+                        echo "Connection {$conn->resourceId} (User: {$user['username']}, {$user['id']}) has connected\n";
+                        $user_obj = new DBClass('users');
+                        $user_obj->update('id', $user['id'], ['status' => 1]);
+                        $user_obj = null;
+                        $conn->send(json_encode(["message" => "Welcome to the WebSocket server!"]));
+                    }
+                } catch (\Exception $e) {
+                    // Token verification failed
+                    echo "Connection {$conn->resourceId} failed authentication\n";
+                    $conn->close();
+                }
             }
+        } catch (Exception $e) {
+            echo ("error=>  " + $e->getMessage());
         }
     }
 
     public function onMessage(ConnectionInterface $from, $msg)
     {
-        $data = json_decode($msg, true);
-        print_r($data);
 
-        if (isset($data['action'])) {
-            switch ($data['action']) {
-                case 'createRoom':
+        try {
+            $data = json_decode($msg, true);
+            print_r($data);
 
-                    $token = $this->extractTokenFromQueryString($from);
-                    $user = $this->getUserFromToken($token);
+            if (isset($data['action'])) {
+                switch ($data['action']) {
+                    case 'createRoom':
+                        try {
+                            $token = $this->extractTokenFromQueryString($from);
+                            $user = $this->getUserFromToken($token);
+                            if (is_array($user) && isset($user['error'])) {
 
-                    $roomCode = $this->createRoom($user['id'], $from);
+                                $from->send(json_encode($user));
+                                $from->close();
+                            }
+                            $roomCode = $this->createRoom($user['id'], $from);
+                        } catch (Exception $e) {
+                            echo ("error=>  " + $e->getMessage());
+                        }
 
-                    break;
-                case 'joinRoom':
-                    $token = $this->extractTokenFromQueryString($from);
+                        break;
+                    case 'joinRoom':
+                        $token = $this->extractTokenFromQueryString($from);
 
-                    $user = $this->getUserFromToken($token);
+                        $user = $this->getUserFromToken($token);
+                        if (is_array($user) && isset($user['error'])) {
 
-                    $roomCode = $data['roomCode'];
-                    echo $roomCode;
-                    $this->joinRoom($from, $user['id'], $roomCode);
-
-                    break;
-                case 'leaveRoom':
-                    unset($this->connections[$from->resourceId]);
-                    $this->leaveRoom($from);
-
-
-                default:
-                    if (isset($data['roomCode'])) {
+                            $from->send(json_encode($user));
+                            $from->close();
+                        }
                         $roomCode = $data['roomCode'];
+                        echo $roomCode;
+                        $this->joinRoom($from, $user['id'], $roomCode);
 
-                        $this->startGame($from, $roomCode, $msg);
-                    }
+                        break;
+                    case 'leaveRoom':
+                        unset($this->connections[$from->resourceId]);
+                        $this->leaveRoom($from);
 
-                    // Handle other actions
-                    break;
+
+                    default:
+                        if (isset($data['roomCode'])) {
+                            $roomCode = $data['roomCode'];
+
+                            $this->startGame($from, $roomCode, $msg);
+                        }
+
+                        // Handle other actions
+                        break;
+                }
+            } else {
+                if (isset($data['roomCode'])) {
+                    $roomCode = $data['roomCode'];
+
+                    $this->startGame($from, $roomCode, $msg);
+                }
             }
-        } else {
-            if (isset($data['roomCode'])) {
-                $roomCode = $data['roomCode'];
-
-                $this->startGame($from, $roomCode, $msg);
-            }
+        } catch (Exception $e) {
+            echo ("error=>  " + $e->getMessage());
         }
+
 
         // echo "Received message from client {$from->resourceId}: $msg\n";
 
@@ -131,38 +157,42 @@ class TicTacToeServer implements MessageComponentInterface
 
     public function onClose(ConnectionInterface $conn)
     {
+        try {
 
-        $userId = null;
+            $userId = null;
 
-        foreach ($this->players_connections as $key => $player) {
-            if ($player['conn'] == $conn) {
-                $previousPlayerId = $player['id'];
-                unset($this->players_connections[$key]);
-        
-                // Check if the same player has another connection
-                $hasOtherConnection = false;
-                foreach ($this->players_connections as $otherPlayer) {
-                    if ($otherPlayer['id'] == $previousPlayerId) {
-                        $hasOtherConnection = true;
-                        break;
+            foreach ($this->players_connections as $key => $player) {
+                if ($player['conn'] == $conn) {
+                    $previousPlayerId = $player['id'];
+                    unset($this->players_connections[$key]);
+
+                    // Check if the same player has another connection
+                    $hasOtherConnection = false;
+                    foreach ($this->players_connections as $otherPlayer) {
+                        if ($otherPlayer['id'] == $previousPlayerId) {
+                            $hasOtherConnection = true;
+                            break;
+                        }
                     }
+
+                    // Update the player's status based on whether they have another connection
+                    $user_obj = new DBClass('users');
+                    $status = $hasOtherConnection ? true : false;
+                    $user_obj->update('id', $previousPlayerId, ['status' => $status]);
+
+                    break; // Stop the loop once the matching connection is found and removed
                 }
-        
-                // Update the player's status based on whether they have another connection
-                $user_obj = new DBClass('users');
-                $status = $hasOtherConnection ? true : false;
-                $user_obj->update('id', $previousPlayerId, ['status' => $status]);
-        
-                break; // Stop the loop once the matching connection is found and removed
             }
+
+
+
+            unset($this->connections[$conn->resourceId]);
+            // $this->leaveRoom($conn);
+
+            echo "Connection {$conn->resourceId} has disconnected\n";
+        } catch (Exception $e) {
+            echo ("error=>  " + $e->getMessage());
         }
-        
-        
-
-        unset($this->connections[$conn->resourceId]);
-        // $this->leaveRoom($conn);
-
-        echo "Connection {$conn->resourceId} has disconnected\n";
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e)
@@ -198,6 +228,10 @@ class TicTacToeServer implements MessageComponentInterface
         // Decode and verify the JWT token to get user information
         $decoded = Token::decodeToken($token, $this->secretKey);
         // Replace this with your actual user retrieval logic from the decoded token
+        if (is_array($decoded) && isset($decoded['error'])) {
+
+            return $decoded;
+        }
         return [
             'id' => $decoded->userId,
             'username' => $decoded->username,
@@ -221,22 +255,14 @@ class TicTacToeServer implements MessageComponentInterface
 
         $result = $roomobj->create([
             "roomCode" => $roomCode, "player1" => $userId, 'player2' => null,
-            'board' => "[['', '', ''], ['', '', ''], ['', '', '']]",
-            'turn' => 1,
-            'gameOver' => false,
-            'chancesLeft' => 9,
+
+            'gameOver' => 0,
+
         ]);
         // $roomId =$result['last_id'];
         print_r($result);
         $roomobj = null;
-        $this->games[$roomCode] = [
-            'player1' => $userId,
-            'player2' => null,
-            'board' => [['', '', ''], ['', '', ''], ['', '', '']],
-            'turn' => 1,
-            'gameOver' => false,
-            'chancesLeft' => 9,
-        ];
+
         $conn->send(json_encode(["createroomCode" => $roomCode]));
         echo "Room {$roomCode} created\n";
         return $roomCode;
@@ -248,13 +274,6 @@ class TicTacToeServer implements MessageComponentInterface
         $roomobj = new DBClass('rooms');
         $result = $roomobj->get('roomCode', $roomCode);
 
-        // print_r($result['player1']);
-        // echo(!isset($result['player1']));
-        // echo  $this->checkuserstatus($result['player1']);
-        // echo  $this->checkuserstatus($userId);
-        // echo $this->checkuserstatus($result['player1']) &&  $this->checkuserstatus($userId)!=true;
-        // echo !isset($result['player1']);
-        // echo !$this->checkuserstatus($result['player1']) &&  !$this->checkuserstatus($userId);
 
         if (isset($result['player1'])) {
             if ($result['player1'] == $userId) {
@@ -262,8 +281,8 @@ class TicTacToeServer implements MessageComponentInterface
                 return;
             } elseif ($this->checkuserstatus($result['player1']) &&  $this->checkuserstatus($userId)) {
                 if (!isset($result['player2'])) {
-                    $roomobj->update('id', $result['id'], ['player2' => $userId]);
-                     $roomId = $result['id'];
+                    $roomobj->update('id', $result['id'], ['player2' => $userId, 'gameStart' => true]);
+                    $roomId = $result['id'];
                     $user2 = new DBClass('users');
                     $resultuser2 = $user2->get('id', $userId);
 
@@ -297,7 +316,6 @@ class TicTacToeServer implements MessageComponentInterface
                                     break; // Break the loop once the message is sent
                                 }
                             }
-                            
                         }
 
                         return;
@@ -321,15 +339,15 @@ class TicTacToeServer implements MessageComponentInterface
     {
         $userId = null;
 
-        
+
 
         foreach ($this->players_connections as $player) {
             if ($conn === $player['conn']) {
                 $userId = $player['id'];
-                break;
+                // break;
             }
         }
-        
+
 
         if ($userId !== null) {
 
@@ -340,47 +358,88 @@ class TicTacToeServer implements MessageComponentInterface
             $stmt = $pdo->prepare("SELECT id, player1, player2 FROM rooms WHERE player1 = :userId OR player2 = :userId");
             $stmt->bindParam(':userId', $userId, PDO::PARAM_INT);
             $stmt->execute();
-            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            $res = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            if (!empty($res)) {
+                foreach ($res as $result) {
+                    if ($result) {
+                        $roomId = $result['id'];
 
-            if ($result) {
-                $roomId = $result['id'];
-
-                // Remove the user from the room
-                if ($result['player1'] == $userId) {
-                    $stmt = $pdo->prepare("UPDATE rooms SET player1 = NULL WHERE id = :roomId");
-                } elseif ($result['player2'] == $userId) {
-                    $stmt = $pdo->prepare("UPDATE rooms SET player2 = NULL WHERE id = :roomId");
-                }
-
-                $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
-                $stmt->execute();
-
-
-                // Notify the other user in the room, if any
-                $otherUserId = ($result['player1'] == $userId) ? $result['player2'] : $result['player1'];
-                echo "User id {$userId} left room {$roomId}\n{$otherUserId}";
-
-                if ($otherUserId) {
-                    foreach ($this->players_connections as $player) {
-                        if ($player['id'] == $otherUserId) {
-                            $player['conn']->send(json_encode(["message" => "other player left the game."]));
-                            break; // Stop the loop once the message is sent
+                        // Remove the user from the room
+                        if ($result['player1'] == $userId) {
+                            $stmt = $pdo->prepare("UPDATE rooms SET player1 = NULL, gameOver= 1 WHERE id = :roomId");
+                        } elseif ($result['player2'] == $userId) {
+                            $stmt = $pdo->prepare("UPDATE rooms SET player2 = NULL ,gameOver= 1 WHERE id = :roomId");
                         }
-                    }
-                }
-                
-                $stmt = $pdo->prepare("SELECT id, player1, player2 FROM rooms WHERE player1 = :userId OR player2 = :userId");
-                $stmt->bindParam(':userId', $userId, PDO::PARAM_INT);
-                $stmt->execute();
-                $getresult = $stmt->fetch(PDO::FETCH_ASSOC);
-                // Check if both users have left, then delete the room
-                print_r($getresult);
 
-                if (is_null($getresult['player1'])  || is_null($getresult['player2'])) {
-                    $stmt = $pdo->prepare("DELETE FROM rooms WHERE id = :roomId");
-                    $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
-                    $stmt->execute();
-                    echo "Room {$roomId} deleted\n";
+                        $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
+                        $stmt->execute();
+
+
+                        // Notify the other user in the room, if any
+                        $otherUserId = ($result['player1'] == $userId) ? $result['player2'] : $result['player1'];
+                        echo "User id {$userId} left room {$roomId}\n{$otherUserId}";
+
+                        if ($otherUserId) {
+                            foreach ($this->players_connections as $player) {
+                                if ($player['id'] == $otherUserId) {
+                                    $player['conn']->send(json_encode(["message" => "Other player left the game."]));
+                                    // break; // Stop the loop once the message is sent
+                                }
+                            }
+                        }
+                        $stmt = $pdo->prepare("SELECT id, player1, player2,gameOver FROM rooms WHERE gameOver = 1");
+                        $stmt->execute();
+                        $getnullresult = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                        echo "getnullresult";
+                        print_r($getnullresult);
+
+                        if (!empty($getnullresult)) {
+                            foreach ($getnullresult as $val) {
+
+                                if (is_null($val['player1'])  && is_null($val['player2'])) {
+
+                                    $stmt = $pdo->prepare("DELETE FROM rooms WHERE id = :roomId");
+                                    $stmt->bindParam(':roomId', $val['id'], PDO::PARAM_INT);
+                                    $stmt->execute();
+                                    echo "Room {$roomId} deleted\n";
+                                }
+                            }
+                        }
+                        // $stmt = $pdo->prepare("SELECT id, player1, player2,gameOver FROM rooms WHERE player1 = :userId OR player2 = :userId");
+                        // $stmt->bindParam(':userId', $userId, PDO::PARAM_INT);
+                        // $stmt->execute();
+                        // $getresult = $stmt->fetch(PDO::FETCH_ASSOC);
+                        // print_r($getresult);
+                        // // Check if both users have left, then delete the room
+                        // echo "getresult";
+
+                        // // if(isset($getresult['gameOver'])){
+
+                        // //     if($getresult['gameOver']){
+
+                        // //         $stmt = $pdo->prepare("DELETE FROM rooms WHERE id = :roomId");
+                        // //         $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
+                        // //         $stmt->execute();
+                        // //         echo "Room {$roomId} deleted\n";
+                        // //         if ($otherUserId) {
+                        // //             foreach ($this->players_connections as $player) {
+                        // //                 if ($player['id'] == $otherUserId) {
+                        // //                     $player['conn']->send(json_encode(["message" => "This Room is Deleted."]));
+                        // //                     break; // Stop the loop once the message is sent
+                        // //                 }
+                        // //             }
+                        // //         }
+
+                        // }
+
+                        // }
+                        // if (is_null($getresult['player1'])  || is_null($getresult['player2'])) {
+                        //     $stmt = $pdo->prepare("DELETE FROM rooms WHERE id = :roomId");
+                        //     $stmt->bindParam(':roomId', $roomId, PDO::PARAM_INT);
+                        //     $stmt->execute();
+                        //     echo "Room {$roomId} deleted\n";
+                        // }
+                    }
                 }
             }
         }
@@ -401,16 +460,16 @@ class TicTacToeServer implements MessageComponentInterface
                     break;
                 }
             }
-            
+
             if ($result && isset($result['player1']) && isset($result['player2'])) {
                 $user1Conn = [];
                 $user2Conn = [];
-            
+
                 // Find the connections for player1 and player2
                 foreach ($this->players_connections as $player) {
                     if ($player['id'] == $result['player1']) {
                         $user1Conn[] = $player['conn'];
-                        
+
                         // $user1Conn->send(trim($msg));
 
                     } elseif ($player['id'] == $result['player2']) {
@@ -419,27 +478,25 @@ class TicTacToeServer implements MessageComponentInterface
 
                     }
                 }
-            
+
                 // Check which player to send the message to
                 if ($fromuser_id != (int)$result['player2']) {
                     if ($user2Conn !== null) {
-                        foreach ($user2Conn as $user2Connect){
+                        foreach ($user2Conn as $user2Connect) {
 
                             $user2Connect->send(trim($msg));
                         }
-                     
                     }
                 } else {
                     if ($user1Conn !== null) {
-                        foreach ($user1Conn as $user1Connnet){
+                        foreach ($user1Conn as $user1Connnet) {
 
                             $user1Connnet->send(trim($msg));
                         }
-                      
                     }
                 }
             }
-            
+
             // print_r($result);
             // if ($result && isset($result['player1']) && isset($result['player2'])) {
             //     $user1Conn = $this->users_connections[$result['player1']];
@@ -449,7 +506,7 @@ class TicTacToeServer implements MessageComponentInterface
             //     //      'turn' => $msg['turn'],
             //     //      'chancesLeft' => $msg['chancesLeft'],
             //     // ]);
-                
+
             //     // echo "from user " . $fromuser_id."  to ".$result['player1']." to ".$result['player2'];
             //     if ($fromuser_id != (int)$result['player2']) {
 
